@@ -1,7 +1,7 @@
-from fastapi import FastAPI, APIRouter,BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, APIRouter,BackgroundTasks, WebSocket, WebSocketDisconnect, Depends,Request
 import asyncio
 from DataModels import JobType,Job,inputJob,runningJobs,JobProcessorFactory,JobProcessor
-
+from log import AppLogger
 App=FastAPI()
 router=APIRouter()
 totalJobs=[]
@@ -9,8 +9,11 @@ registryJobs=[]
 async def RunJob(job:Job):
     process=JobProcessorFactory.create(job.Type.value)
     await process.RunJob(job)
+
+#Route to create a job
 @router.post("/CreateJob")
 def create_jobs(inputJob:inputJob,background_tasks: BackgroundTasks):
+    #input job being used to 
     job=Job(Name=inputJob.Name,Priority=inputJob.Priority,Type=inputJob.Type)
     registryJobs.append(job)
     totalJobs.append(job)
@@ -82,6 +85,16 @@ async def websocket_end(ws:WebSocket):
         ws.disconnect()
         print("Client Disconnected")
 
+
+
+
+@App.middleware("http")
+async def mid1(request: Request, call_next):
+    log=AppLogger()
+    log.info(f"{request.method} has started")
+    response = await call_next(request)
+    log.info(f"{request.method} has finished")
+    return response
 
 
 App.include_router(router)
