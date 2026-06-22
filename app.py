@@ -1,47 +1,87 @@
-from pydantic import BaseModel,Field,field_validator
-from fastapi import FastAPI, Depends, APIRouter,BackgroundTasks,Request
-import uuid
-from datetime import datetime,timezone
-
+from fastapi import FastAPI, APIRouter,BackgroundTasks, WebSocket, WebSocketDisconnect
+import asyncio
+from DataModels import JobType,Job,inputJob,runningJobs,JobProcessorFactory,JobProcessor
 
 App=FastAPI()
 router=APIRouter()
 totalJobs=[]
-class Job (BaseModel):
-    ID: str = Field(default_factory=lambda: uuid.uuid4())    
-    Name: str
-    Type:str
-    Priority: int
-    Status:str
-    Timestamp: datetime = Field(default_factory=lambda: datetime.now(datetime.timezone.utc))
-
-
+registryJobs=[]
+async def RunJob(job:Job):
+    process=JobProcessorFactory.create(job.Type.value)
+    await process.RunJob(job)
 @router.post("/CreateJob")
-def get_multiple_users(job:Job):
-    # fullJob=JobWithIDandTime(job)
+def create_jobs(inputJob:inputJob,background_tasks: BackgroundTasks):
+    job=Job(Name=inputJob.Name,Priority=inputJob.Priority,Type=inputJob.Type)
+    registryJobs.append(job)
     totalJobs.append(job)
+    totalJobs.sort(key=lambda x: x.Priority)
+    PriorityJob=totalJobs.pop()
+    background_tasks.add_task(RunJob,PriorityJob)
     return job
 
 @router.get("/GetDetails/{name}")
-def get_multiple_users(name:str):
-    foundJobs=[job for job in totalJobs if job.Name==name]
-       
+def get_details(name:str):
+    foundJobs=[job for job in registryJobs if job.Name==name]       
     if foundJobs:
         return foundJobs
     return "No jobs found"
 
 @router.get("/AllJobs/")
-def getAllJobs(sort:str|None=None,page:int|None=None):
-    totalJobs
-    return 1
+def get_all_jobs(Name:str|None=None,Type:JobType|None=None,Priority:str|None=None,Status:str|None=None,
+                 pageNumber:int|None=1,pageSize:int|None=None):
+    filteredJob=registryJobs
+    if Name:
+        filteredJob=[job for job in filteredJob if Name==job.Name]
+    if Type:
+        filteredJob=[job for job in filteredJob if Type==job.JobType]
+    if Priority:
+        filteredJob=[job for job in filteredJob if Priority==job.Priority]
+    if Status:
+        filteredJob=[job for job in filteredJob if Status==job.Status]
+    page=filteredJob
+    if pageSize:
+        page=filteredJob[pageSize*pageNumber-pageSize:pageSize*pageNumber]
+    return page
 
 @router.delete("/DeleteJob/{name}")
-def deleteJob(name:str):
-    totalJobs=[job for job in totalJobs if not job.Name==name]
-    return totalJobs
+def delete_job(name:str):
+    registryJobs=[job for job in registryJobs if not job.Name==name]
+    return registryJobs
 
 @router.get("/Stats")
 def getStats():
-    
-    return totalJobs
+    StatsObj={"PENDING":0,"PROCESSING":0,"COMPLETED":0,"FAILED":0}
+    for job in registryJobs:
+        if job.Status=="PROCESSING":
+            StatsObj["PROCESSING"]+=1
+        if job.Status=="PENDING":
+            StatsObj["PENDING"]+=1
+        if job.Status=="COMPLETED":
+            StatsObj["COMPLETED"]+=1
+        if job.Status=="FAILED":
+            StatsObj["FAILED"]+=1
+    return StatsObj
+
+
+
+async def websocket_endpoint(websocket: WebSocket):
+
+    while True:
+        if not runningJobs==[]:
+            temp=runningJobs.pop()
+            await websocket.send_text(f"{temp.Name} is running")        
+
+@App.websocket("/ws")
+async def websocket_end(ws:WebSocket):
+    await ws.accept()
+    try:
+        await asyncio.gather(
+        websocket_endpoint(ws),
+    )
+    except WebSocketDisconnect:
+        ws.disconnect()
+        print("Client Disconnected")
+
+
+
 App.include_router(router)
